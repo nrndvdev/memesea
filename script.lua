@@ -1,96 +1,96 @@
--- Roblox Studio: insert as a LocalScript in StarterPlayer > StarterPlayerScripts.
--- Private Studio test only. B toggles the boxes. Use a multi-client playtest.
--- Only characters replicated to this client can be displayed.
+-- Client-side 3D player boxes with a click/touch GUI.
+-- Uses standard Roblox APIs; no downloads or executor-specific hooks.
+-- Delta runtime compatibility has not been tested.
+-- Only displays characters currently replicated to the client.
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
+local localPlayer = Players.LocalPlayer
+assert(localPlayer, "Player ESP requires a Roblox client context.")
 
-if not RunService:IsStudio() then
-    warn("PlayerBoxes: this visualization is restricted to Studio playtests.")
-    return
+local playerGui = localPlayer:WaitForChild("PlayerGui", 10)
+assert(playerGui, "PlayerGui was not available within 10 seconds.")
+
+local GUI_NAME = "XyroPlayerBoxesGUI"
+local oldGui = playerGui:FindFirstChild(GUI_NAME)
+if oldGui then
+    local stop = oldGui:FindFirstChild("Stop")
+    if stop and stop:IsA("BindableFunction") then
+        stop:Invoke()
+    else
+        oldGui:Destroy()
+    end
 end
 
-local localPlayer = Players.LocalPlayer
-assert(localPlayer, "PlayerBoxes must run as a LocalScript.")
-
-local COLOR = Color3.fromRGB(0, 255, 180)
-local THICKNESS = 0.055
-local PADDING = Vector3.new(0.15, 0.15, 0.15)
+local COLOR = Color3.fromRGB(0, 235, 170)
+local THICKNESS = 0.06
+local PADDING = Vector3.new(0.2, 0.2, 0.2)
 local UPDATE_INTERVAL = 0.1
+local enabled = false
+local stopped = false
+local elapsed = UPDATE_INTERVAL
+local boxes = {}
+local connections = {}
+
+local function connect(signal, callback)
+    local connection = signal:Connect(callback)
+    connections[#connections + 1] = connection
+    return connection
+end
+
+local gui = Instance.new("ScreenGui")
+gui.Name = GUI_NAME
+gui.ResetOnSpawn = false
+gui.DisplayOrder = 10000
+gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 
 local container = Instance.new("Folder")
-container.Name = "PlayerBoxes"
-container.Parent = localPlayer:WaitForChild("PlayerGui")
+container.Name = "Boxes"
+container.Parent = gui
 
-local boxes = {}
-local enabled = true
-local elapsed = UPDATE_INTERVAL
-
-local function removeBox(player)
-    local record = boxes[player]
-    if record then
-        record.folder:Destroy()
-        boxes[player] = nil
-    end
+local function rounded(object, radius)
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0, radius)
+    corner.Parent = object
 end
 
-local function clearBoxes()
-    for player in pairs(boxes) do
-        removeBox(player)
-    end
-end
+local panel = Instance.new("Frame")
+panel.Name = "Panel"
+panel.Size = UDim2.fromOffset(240, 130)
+panel.Position = UDim2.fromOffset(24, 80)
+panel.BackgroundColor3 = Color3.fromRGB(21, 24, 31)
+panel.BorderSizePixel = 0
+panel.Parent = gui
+rounded(panel, 12)
 
-local function createBox(player, character, root)
-    local folder = Instance.new("Folder")
-    folder.Name = tostring(player.UserId)
-    folder.Parent = container
+local title = Instance.new("TextLabel")
+title.Name = "DragHandle"
+title.Size = UDim2.new(1, -52, 0, 42)
+title.Position = UDim2.fromOffset(14, 0)
+title.BackgroundTransparency = 1
+title.Font = Enum.Font.GothamBold
+title.Text = "3D PLAYER ESP"
+title.TextSize = 15
+title.TextColor3 = Color3.fromRGB(235, 240, 247)
+title.TextXAlignment = Enum.TextXAlignment.Left
+title.Active = true
+title.Parent = panel
 
-    local edges = {}
-    for i = 1, 12 do
-        local edge = Instance.new("BoxHandleAdornment")
-        edge.Name = "Edge" .. i
-        edge.Adornee = root
-        edge.AlwaysOnTop = true
-        edge.ZIndex = 5
-        edge.Color3 = COLOR
-        edge.Transparency = 0
-        edge.Parent = folder
-        edges[i] = edge
-    end
+local closeButton = Instance.new("TextButton")
+closeButton.Name = "Close"
+closeButton.Size = UDim2.fromOffset(32, 32)
+closeButton.Position = UDim2.new(1, -39, 0, 5)
+closeButton.BackgroundTransparency = 1
+closeButton.Font = Enum.Font.GothamBold
+closeButton.Text = "X"
+closeButton.TextSize = 18
+closeButton.TextColor3 = Color3.fromRGB(240, 120, 120)
+closeButton.Parent = panel
 
-    local record = {
-        folder = folder,
-        character = character,
-        root = root,
-        edges = edges,
-    }
-    boxes[player] = record
-    return record
-end
-
-local function updateBox(record)
-    -- Includes the character's currently replicated accessories and tools.
-    local boundsFrame, boundsSize = record.character:GetBoundingBox()
-    local size = boundsSize + PADDING
-    local half = size * 0.5
-    local relative = record.root.CFrame:ToObjectSpace(boundsFrame)
-    local index = 0
-
-    local function edge(position, dimensions)
-        index = index + 1
-        local adornment = record.edges[index]
-        adornment.Size = dimensions
-        adornment.CFrame = relative * CFrame.new(position)
-    end
-
-    -- Four edges along each of the three axes form a wireframe cuboid.
-    for _, a in ipairs({ -1, 1 }) do
-        for _, b in ipairs({ -1, 1 }) do
-            edge(Vector3.new(0, a * half.Y, b * half.Z),
-                Vector3.new(size.X, THICKNESS, THICKNESS))
-            edge(Vector3.new(a * half.X, 0, b * half.Z),
-                Vector3.new(THICKNESS, size.Y, THICKNESS))
-            edge(Vector3.new(a * half.X, b * half.Y, 0),
-                Vector3.new(THICKNESS, THICKNESS, size.Z))
-        end
+local toggleButton = Instance.new("TextButton")
+toggleButton.Name = "ToggleESP"
+toggleButton.Size = UDim2.new(1, -28, 0, 44)
+toggleButton.Position = UDim2.fromOffset(14, 46)
+toggleButton.BorderSizePixel = 0
+toggleButton.Font = Enum.Font.GothamBold
